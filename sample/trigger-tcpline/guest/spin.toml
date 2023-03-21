@@ -5,9 +5,19 @@ trigger = { type = "tcpline" }
 version = "0.1.0"
 
 [[component]]
-id = "test"
-source = "target/wasm32-wasi/release/guest.wasm"
+id = "simple"
+source = "simple/target/wasm32-wasi/release/simple.wasm"
 [component.trigger]
 port = 8089
 [component.build]
 command = "cargo build --target wasm32-wasi --release"
+workdir = "simple"
+
+[[component]]
+id = "fancy"
+source = "fancy/target/wasm32-wasi/release/fancy.wasm"
+[component.trigger]
+port = 8099
+[component.build]
+command = "cargo build --target wasm32-wasi --release"
+workdir = "fancy"

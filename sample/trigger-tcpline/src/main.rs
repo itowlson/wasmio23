@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use anyhow::Error;
+use anyhow::{Error, anyhow};
 use clap::{Parser};
 use serde::{Deserialize, Serialize};
 use spin_trigger::{cli::TriggerExecutorCommand, TriggerExecutor, TriggerAppEngine};
@@ -73,6 +73,7 @@ impl TriggerExecutor for TcpLineTrigger {
 
     async fn run(self, config: Self::RunConfig) -> anyhow::Result<()> {
         let host = &config.host;
+        let engine = Arc::new(self.engine);
 
         // This trigger spawns threads, which Ctrl+C does not kill.  So
         // for this case we need to detect Ctrl+C and shut those threads
@@ -82,46 +83,51 @@ impl TriggerExecutor for TcpLineTrigger {
             std::process::exit(0);
         });
 
-        tokio_scoped::scope(|scope| {
-            for (c, settings) in self.component_settings.clone() {
-                let port = settings.port;
-
-                let addr = format!("{host}:{port}");
-                let listener = std::net::TcpListener::bind(&addr).unwrap();
-    
-                for stream in listener.incoming() {
-                    let component_id = c.clone();
-                    scope.spawn(async {
-                        if let Ok(stm) = stream {
-                            match self.handle_stream(component_id, stm).await {
-                                Ok(()) => (),
-                                Err(e) => { eprintln!("{e:?}"); }
-                            }
-                        }
-                    });
-                }
-            }
+        let loops = self.component_settings.iter().map(|(c, settings)| {
+            let port = settings.port;
+            let addr = format!("{host}:{port}");
+            // Move things out to a function that does not borrow `self`.
+            // This makes lifetimes much easier!
+            tokio::task::spawn(Self::run_listen_loop(engine.clone(), c.clone(), addr))
         });
 
-        Ok(())
+        let (fin, _, rest) = futures::future::select_all(loops).await;
+        drop(rest);
+
+        fin.map_err(|e| anyhow!(e))
     }
 }
 
 impl TcpLineTrigger {
 
-    async fn handle_stream(&self, component_id: String, mut stm: std::net::TcpStream) -> anyhow::Result<()> {
+    async fn run_listen_loop(engine: Arc<TriggerAppEngine<Self>>, component_id: String, addr: String) {
+        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+        println!("{component_id} listening on {addr}");
+        loop {
+            if let Ok((stm, _)) = listener.accept().await {
+                let stm = stm.into_std().unwrap();
+                stm.set_nonblocking(false).unwrap();
+                match Self::handle_stream(engine.clone(), component_id.clone(), stm).await {
+                    Ok(()) => (),
+                    Err(e) => { eprintln!("handle_stream failed {e:?}"); }
+                }
+            }
+        }
+    }
+
+    async fn handle_stream(engine: Arc<TriggerAppEngine<Self>>, component_id: String, mut stm: std::net::TcpStream) -> anyhow::Result<()> {
         use std::io::{BufRead, Write};
 
         let reader = std::io::BufReader::new(&stm);
         let line = reader.lines().nth(0).unwrap()?;
-        let response = self.handle_line(&component_id, &line).await?;
+        let response = Self::handle_line(engine, &component_id, &line).await?;
         stm.write(response.as_bytes())?;
         Ok(())
     }
 
-    async fn handle_line(&self, component_id: &str, line: &str) -> anyhow::Result<String> {
-        // Load the guest...+
-        let (instance, mut store) = self.engine.prepare_instance(&component_id).await?;
+    async fn handle_line(engine: Arc<TriggerAppEngine<Self>>, component_id: &str, line: &str) -> anyhow::Result<String> {
+        // Load the guest...
+        let (instance, mut store) = engine.prepare_instance(&component_id).await?;
         let engine = tcp_line::TcpLine::new(&mut store, &instance, |data| data.as_mut())?;
         // ...and call the entry point
         let response = engine

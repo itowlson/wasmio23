@@ -1,4 +1,4 @@
-wit_bindgen_rust::export!("../wit/tcp-line.wit");
+wit_bindgen_rust::export!("../../wit/tcp-line.wit");
 
 struct TcpLine;
 
