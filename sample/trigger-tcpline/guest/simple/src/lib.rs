@@ -5,6 +5,6 @@ struct TcpLine;
 impl tcp_line::TcpLine for TcpLine {
     fn handle_line(line: String) -> String {
         println!("Received line: {line}");
-        "HELLO FROM SPIN\n".to_owned()
+        "¡HOLA FROM BARCELONA!\n".to_owned()
     }
 }

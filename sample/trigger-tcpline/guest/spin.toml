@@ -16,6 +16,7 @@ workdir = "simple"
 [[component]]
 id = "fancy"
 source = "fancy/target/wasm32-wasi/release/fancy.wasm"
+allowed_http_hosts = ["some-random-api.ml"]
 [component.trigger]
 port = 8099
 [component.build]
