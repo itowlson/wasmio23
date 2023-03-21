@@ -12,7 +12,7 @@ pub(crate) type _Store = spin_core::Store<RuntimeData>;
 
 #[derive(clap::Args)]
 struct CommandLineArgs {
-    #[clap(long = "port", default_value = "127.0.0.1")]
+    #[clap(long = "host", default_value = "127.0.0.1")]
     host: String,
 }
 
