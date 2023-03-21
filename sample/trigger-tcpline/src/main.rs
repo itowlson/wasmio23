@@ -10,26 +10,42 @@ wit_bindgen_wasmtime::import!({paths: ["wit/tcp-line.wit"], async: *});
 pub(crate) type RuntimeData = tcp_line::TcpLineData;
 pub(crate) type _Store = spin_core::Store<RuntimeData>;
 
+// The options we want to surface via the `spin up` command line.
+// No, I couldn't think of a very realistic one!
 #[derive(clap::Args)]
 struct CommandLineArgs {
     #[clap(long = "host", default_value = "127.0.0.1")]
     host: String,
 }
 
+// `TriggerExecutorCommand` is the Spin type that handles
+// program, application, and trigger load. Parameterise it
+// with the trigger type.
 type Command = TriggerExecutorCommand<TcpLineTrigger>;
 
+// The entry point for the trigger plugin. Just a normal
+// Rust program...
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // ...that immediately hands off to TriggerExecutorCommand
+    // to do all the heavy lifting.
     let t = Command::parse();
     t.run().await
 }
 
+// The trigger type is defined by the trigger plugin author.
+// Spin only requires that it implements TriggerExecutor. In
+// practice it almost always has an `engine` and some kind of
+// collection of component settings. App level settings might
+// go here or be folded into the component settings. All of
+// this can be captured in the `new` method.
 struct TcpLineTrigger {
     engine: TriggerAppEngine<Self>,
     component_settings: HashMap<String, Component>,
 }
 
 // Application settings (raw serialisation format)
+// These correspond to what you see in `trigger = { ... }`
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TriggerMetadata {
@@ -37,6 +53,7 @@ struct TriggerMetadata {
 }
 
 // Per-component settings (raw serialisation format)
+// These correspond to what you see under `[component.trigger]`
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TriggerConfig {
@@ -44,6 +61,10 @@ pub struct TriggerConfig {
     port: u16,
 }
 
+// Often it's useful to have an internal representation of
+// the component settings, for example if things need parsing, or
+// options need defaulting. It's overkill here but showing it for
+// the pattern. See the SQS trigger for a more realistic example.
 #[derive(Clone, Debug)]
 struct Component {
     port: u16,
@@ -55,8 +76,12 @@ impl TriggerExecutor for TcpLineTrigger {
 
     type RuntimeData = RuntimeData;
 
+    // What per-component settings look like. Accessed through
+    // in `new` via `engine.trigger_configs`.
     type TriggerConfig = TriggerConfig;
 
+    // Tells TriggerExecutorCommand extra fields for the command line.
+    // Accessed in `run` via the `config` parameter.
     type RunConfig = CommandLineArgs;
 
     fn new(engine: spin_trigger::TriggerAppEngine<Self>) -> anyhow::Result<Self>  {
@@ -64,6 +89,9 @@ impl TriggerExecutor for TcpLineTrigger {
             .trigger_configs()
             .map(|(_, config)| (config.component.clone(), get_settings(config)))
             .collect();
+
+        // We don't have any app level settings, but if we did, we
+        // could get them via `engine.app().require_metadata::<TriggerMetadata>("trigger")`.
 
         Ok(Self {
             engine,
@@ -99,6 +127,10 @@ impl TriggerExecutor for TcpLineTrigger {
 }
 
 impl TcpLineTrigger {
+
+    // BEWARE! The error handling in the loop and the functions it calls
+    // is horribly oversimplified. An error processing a request should
+    // *not* exit the loop, because that ends the program!
 
     async fn run_listen_loop(engine: Arc<TriggerAppEngine<Self>>, component_id: String, addr: String) {
         let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
@@ -138,6 +170,8 @@ impl TcpLineTrigger {
     }
 }
 
+// Again, this is overkill here, but useful in more complex
+// cases.
 fn get_settings(config: &TriggerConfig) -> Component {
     Component {
         port: config.port
